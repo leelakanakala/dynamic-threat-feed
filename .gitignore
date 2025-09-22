@@ -18,6 +18,7 @@ build/
 # Wrangler
 .wrangler/
 wrangler.toml.backup
+worker-configuration.d.ts
 
 # IDE and editor files
 .vscode/

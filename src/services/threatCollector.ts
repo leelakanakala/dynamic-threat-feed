@@ -33,7 +33,7 @@ export class ThreatCollector {
 		return [
 			{
 				name: 'Abuse.ch Feodo Tracker',
-				url: 'https://feodotracker.abuse.ch/downloads/ipblocklist.txt',
+				url: 'https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt',
 				format: 'plain',
 				weight: 8,
 				timeout: 30000,
@@ -44,7 +44,7 @@ export class ThreatCollector {
 			},
 			{
 				name: 'Malware Domain List',
-				url: 'https://www.malwaredomainlist.com/hostslist/hosts.txt',
+				url: 'https://rules.emergingthreats.net/blockrules/compromised-ips.txt',
 				format: 'plain',
 				weight: 7,
 				timeout: 30000,
@@ -53,28 +53,28 @@ export class ThreatCollector {
 				extract_domains: true,
 				extract_ips: false
 			},
-			{
-				name: 'Emerging Threats Compromised IPs',
-				url: 'https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt',
-				format: 'plain',
-				weight: 9,
-				timeout: 30000,
-				user_agent: 'Dynamic-Threat-Feed/1.0',
-				enabled: true,
-				extract_domains: false,
-				extract_ips: true
-			},
-			{
-				name: 'URLVoid Malicious URLs',
-				url: 'https://www.urlvoid.com/api/1000/host/',
-				format: 'plain',
-				weight: 6,
-				timeout: 30000,
-				user_agent: 'Dynamic-Threat-Feed/1.0',
-				enabled: false, // Requires API key
-				extract_domains: true,
-				extract_ips: false
-			}
+			// {
+			// 	name: 'Emerging Threats Compromised IPs',
+			// 	url: 'https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt',
+			// 	format: 'plain',
+			// 	weight: 9,
+			// 	timeout: 30000,
+			// 	user_agent: 'Dynamic-Threat-Feed/1.0',
+			// 	enabled: true,
+			// 	extract_domains: false,
+			// 	extract_ips: true
+			// },
+			// {
+			// 	name: 'URLVoid Malicious URLs',
+			// 	url: 'https://www.urlvoid.com/api/1000/host/',
+			// 	format: 'plain',
+			// 	weight: 6,
+			// 	timeout: 30000,
+			// 	user_agent: 'Dynamic-Threat-Feed/1.0',
+			// 	enabled: false, // Requires API key
+			// 	extract_domains: true,
+			// 	extract_ips: false
+			// }
 		];
 	}
 
@@ -96,36 +96,40 @@ export class ThreatCollector {
 
 		console.log(`Starting collection from ${this.sources.length} sources`);
 
-		// Fetch from all sources in parallel
-		const fetchPromises = this.sources.map(source => 
-			this.fetchAndParseSource(source).catch(error => {
+		// Process sources sequentially to avoid rate limiting
+		// Instead of parallel processing which can trigger "too many requests"
+		for (const source of this.sources) {
+			try {
+				console.log(`Processing source: ${source.name}`);
+				const result = await this.fetchAndParseSource(source);
+				const totalIndicators = result.ips.length + result.domains.length;
+
+				if (totalIndicators > 0) {
+					stats.successful_sources.push(source.name);
+					stats.total_raw_indicators += totalIndicators;
+
+					// Process IPs
+					for (const ip of result.ips) {
+						this.addThreatIndicator(allIndicators, ip, 'ip', source);
+					}
+
+					// Process domains
+					for (const domain of result.domains) {
+						this.addThreatIndicator(allIndicators, domain, 'domain', source);
+					}
+
+					console.log(`${source.name}: Added ${totalIndicators} indicators`);
+				}
+
+				// Add small delay between sources to be respectful
+				if (this.sources.indexOf(source) < this.sources.length - 1) {
+					await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+				}
+
+			} catch (error) {
 				console.error(`Failed to fetch ${source.name}:`, error);
 				stats.failed_sources.push(source.name);
-				return { ips: [], domains: [] };
-			})
-		);
-
-		const results = await Promise.all(fetchPromises);
-
-		// Process results from each source
-		for (let i = 0; i < results.length; i++) {
-			const source = this.sources[i];
-			const { ips, domains } = results[i];
-			const totalIndicators = ips.length + domains.length;
-
-			if (totalIndicators > 0) {
-				stats.successful_sources.push(source.name);
-				stats.total_raw_indicators += totalIndicators;
-
-				// Process IPs
-				for (const ip of ips) {
-					this.addThreatIndicator(allIndicators, ip, 'ip', source);
-				}
-
-				// Process domains
-				for (const domain of domains) {
-					this.addThreatIndicator(allIndicators, domain, 'domain', source);
-				}
+				// Continue with next source instead of failing completely
 			}
 		}
 

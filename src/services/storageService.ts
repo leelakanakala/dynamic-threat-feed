@@ -34,65 +34,122 @@ export class StorageService {
 	}
 
 	/**
-	 * Store threat indicators in batches
+	 * Store threat indicators (OPTIMIZED: Chunked storage for large datasets)
 	 */
 	async storeIndicators(indicators: Map<string, ThreatIndicator>): Promise<void> {
-		const batchSize = 100; // KV has limits on batch operations
-		const entries = Array.from(indicators.entries());
+		console.log(`Storing ${indicators.size} indicators using chunked storage`);
 		
-		console.log(`Storing ${entries.length} indicators in batches of ${batchSize}`);
-
-		for (let i = 0; i < entries.length; i += batchSize) {
-			const batch = entries.slice(i, i + batchSize);
-			const promises = batch.map(([key, indicator]) => 
-				this.env.THREAT_DATA.put(`${KV_KEYS.INDICATORS_PREFIX}${key}`, JSON.stringify(indicator))
+		// Convert Map to object for JSON serialization
+		const indicatorsObject = Object.fromEntries(indicators);
+		const fullData = JSON.stringify(indicatorsObject);
+		
+		// Check if data fits in single KV entry (20MB limit to be safe)
+		const maxChunkSize = 20 * 1024 * 1024; // 20MB
+		
+		if (fullData.length <= maxChunkSize) {
+			// Store in single entry
+			await this.env.THREAT_DATA.put(KV_KEYS.ALL_INDICATORS, fullData);
+			// Clear any existing chunks
+			await this.env.THREAT_DATA.delete(KV_KEYS.INDICATORS_INDEX);
+			console.log(`Stored ${indicators.size} indicators in single entry (${Math.round(fullData.length / 1024 / 1024 * 100) / 100}MB)`);
+		} else {
+			// Split into chunks
+			console.log(`Data size ${Math.round(fullData.length / 1024 / 1024 * 100) / 100}MB exceeds limit, splitting into chunks`);
+			
+			const chunks: string[] = [];
+			for (let i = 0; i < fullData.length; i += maxChunkSize) {
+				chunks.push(fullData.slice(i, i + maxChunkSize));
+			}
+			
+			console.log(`Split into ${chunks.length} chunks`);
+			
+			// Store chunks
+			const chunkPromises = chunks.map((chunk, index) => 
+				this.env.THREAT_DATA.put(`${KV_KEYS.INDICATORS_CHUNKS}${index}`, chunk)
 			);
-
-			await Promise.all(promises);
-			console.log(`Stored batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(entries.length / batchSize)}`);
+			
+			// Store chunk index
+			const chunkIndex = {
+				total_chunks: chunks.length,
+				total_size: fullData.length,
+				created_at: new Date().toISOString()
+			};
+			
+			await Promise.all([
+				...chunkPromises,
+				this.env.THREAT_DATA.put(KV_KEYS.INDICATORS_INDEX, JSON.stringify(chunkIndex))
+			]);
+			
+			// Clear single entry if it exists
+			await this.env.THREAT_DATA.delete(KV_KEYS.ALL_INDICATORS);
+			
+			console.log(`Successfully stored ${indicators.size} indicators in ${chunks.length} chunks`);
 		}
 	}
 
 	/**
-	 * Get all stored indicators
+	 * Get all stored indicators (OPTIMIZED: Chunked storage support)
 	 */
 	async getAllIndicators(): Promise<Map<string, ThreatIndicator>> {
-		const indicators = new Map<string, ThreatIndicator>();
+		console.log('Loading indicators from storage');
 		
-		// List all keys with the indicators prefix
-		const listResult = await this.env.THREAT_DATA.list({ prefix: KV_KEYS.INDICATORS_PREFIX });
+		// Check if we have chunked data
+		const chunkIndexData = await this.env.THREAT_DATA.get(KV_KEYS.INDICATORS_INDEX);
 		
-		if (listResult.keys.length === 0) {
-			return indicators;
+		if (chunkIndexData) {
+			// Load from chunks
+			const chunkIndex = JSON.parse(chunkIndexData) as {
+				total_chunks: number;
+				total_size: number;
+				created_at: string;
+			};
+			
+			console.log(`Loading ${chunkIndex.total_chunks} chunks (${Math.round(chunkIndex.total_size / 1024 / 1024 * 100) / 100}MB total)`);
+			
+			// Load all chunks in parallel
+			const chunkPromises = Array.from({ length: chunkIndex.total_chunks }, (_, index) =>
+				this.env.THREAT_DATA.get(`${KV_KEYS.INDICATORS_CHUNKS}${index}`)
+			);
+			
+			const chunks = await Promise.all(chunkPromises);
+			
+			// Reconstruct full data
+			const fullData = chunks.join('');
+			
+			try {
+				const indicatorsObject = JSON.parse(fullData) as Record<string, ThreatIndicator>;
+				const indicators = new Map(Object.entries(indicatorsObject));
+				
+				console.log(`Loaded ${indicators.size} indicators from ${chunkIndex.total_chunks} chunks`);
+				return indicators;
+			} catch (error) {
+				console.error('Failed to parse chunked indicators:', error);
+				return new Map();
+			}
+		} else {
+			// Try to load from single entry (legacy support)
+			const data = await this.env.THREAT_DATA.get(KV_KEYS.ALL_INDICATORS);
+			
+			if (!data) {
+				console.log('No indicators found in storage');
+				return new Map();
+			}
+
+			try {
+				const indicatorsObject = JSON.parse(data) as Record<string, ThreatIndicator>;
+				const indicators = new Map(Object.entries(indicatorsObject));
+				
+				console.log(`Loaded ${indicators.size} indicators from single entry`);
+				return indicators;
+			} catch (error) {
+				console.error('Failed to parse indicators from storage:', error);
+				return new Map();
+			}
 		}
-
-		console.log(`Loading ${listResult.keys.length} indicators from storage`);
-
-		// Fetch indicators in batches
-		const batchSize = 100;
-		for (let i = 0; i < listResult.keys.length; i += batchSize) {
-			const batch = listResult.keys.slice(i, i + batchSize);
-			const promises = batch.map(async (key) => {
-				const data = await this.env.THREAT_DATA.get(key.name);
-				if (data) {
-					try {
-						const indicator = JSON.parse(data) as ThreatIndicator;
-						const indicatorKey = key.name.replace(KV_KEYS.INDICATORS_PREFIX, '');
-						indicators.set(indicatorKey, indicator);
-					} catch (error) {
-						console.error(`Failed to parse indicator ${key.name}:`, error);
-					}
-				}
-			});
-
-			await Promise.all(promises);
-		}
-
-		return indicators;
 	}
 
 	/**
-	 * Get active (non-expired) indicators
+	 * Get active indicators (non-expired)
 	 */
 	async getActiveIndicators(): Promise<Map<string, ThreatIndicator>> {
 		const allIndicators = await this.getAllIndicators();
@@ -100,7 +157,8 @@ export class StorageService {
 		const now = new Date();
 
 		for (const [key, indicator] of allIndicators) {
-			if (new Date(indicator.expires_at) > now) {
+			const expiresAt = new Date(indicator.expires_at);
+			if (expiresAt > now) {
 				activeIndicators.set(key, indicator);
 			}
 		}
@@ -120,7 +178,7 @@ export class StorageService {
 		const expiredKeys: string[] = [];
 		for (const [key, indicator] of allIndicators) {
 			if (new Date(indicator.expires_at) <= now) {
-				expiredKeys.push(`${KV_KEYS.INDICATORS_PREFIX}${key}`);
+				expiredKeys.push(key);
 				expiredCount++;
 			}
 		}
@@ -132,7 +190,7 @@ export class StorageService {
 			const batchSize = 100;
 			for (let i = 0; i < expiredKeys.length; i += batchSize) {
 				const batch = expiredKeys.slice(i, i + batchSize);
-				const promises = batch.map(key => this.env.THREAT_DATA.delete(key));
+				const promises = batch.map(key => this.env.THREAT_DATA.delete(`${KV_KEYS.INDICATORS_PREFIX}${key}`));
 				await Promise.all(promises);
 			}
 		}
@@ -224,16 +282,53 @@ export class StorageService {
 	}
 
 	/**
-	 * Clear all data (use with caution)
+	 * Clear all indicator data (including chunks)
+	 */
+	async clearAllIndicatorData(): Promise<void> {
+		console.log('Clearing all indicator data...');
+		
+		// Clear single entry
+		await this.env.THREAT_DATA.delete(KV_KEYS.ALL_INDICATORS);
+		
+		// Clear chunked data
+		const chunkIndexData = await this.env.THREAT_DATA.get(KV_KEYS.INDICATORS_INDEX);
+		if (chunkIndexData) {
+			const chunkIndex = JSON.parse(chunkIndexData) as { total_chunks: number };
+			
+			// Delete all chunks
+			const deletePromises = Array.from({ length: chunkIndex.total_chunks }, (_, index) =>
+				this.env.THREAT_DATA.delete(`${KV_KEYS.INDICATORS_CHUNKS}${index}`)
+			);
+			
+			await Promise.all([
+				...deletePromises,
+				this.env.THREAT_DATA.delete(KV_KEYS.INDICATORS_INDEX)
+			]);
+			
+			console.log(`Cleared ${chunkIndex.total_chunks} chunks`);
+		}
+		
+		console.log('All indicator data cleared');
+	}
+
+	/**
+	 * Clear all data from storage (OPTIMIZED: Chunked storage support)
 	 */
 	async clearAllData(): Promise<void> {
 		console.warn('Clearing all data from KV storage');
 		
-		const allKeys = await this.env.THREAT_DATA.list();
-		const deletePromises = allKeys.keys.map(key => this.env.THREAT_DATA.delete(key.name));
+		// Clear all indicator data (including chunks)
+		await this.clearAllIndicatorData();
 		
-		await Promise.all(deletePromises);
-		console.log(`Cleared ${allKeys.keys.length} keys from storage`);
+		// Clear other data
+		await Promise.all([
+			this.env.THREAT_DATA.delete(KV_KEYS.FEED_METADATA),
+			this.env.THREAT_DATA.delete(KV_KEYS.LAST_UPDATE),
+			this.env.THREAT_DATA.delete(KV_KEYS.UPDATE_STATS),
+			this.env.THREAT_DATA.delete(KV_KEYS.SOURCES_CONFIG)
+		]);
+		
+		console.log('All data cleared from storage');
 	}
 
 	/**
@@ -255,15 +350,20 @@ export class StorageService {
 	 */
 	async restoreIndicators(backupData: string): Promise<number> {
 		try {
-			const backup = JSON.parse(backupData);
-			const indicators = new Map(Object.entries(backup.indicators));
+			const backup = JSON.parse(backupData) as { indicators: Record<string, ThreatIndicator> };
+			const indicators = new Map<string, ThreatIndicator>();
+			
+			// Convert backup object to Map with proper typing
+			for (const [key, value] of Object.entries(backup.indicators)) {
+				indicators.set(key, value);
+			}
 			
 			await this.storeIndicators(indicators);
 			console.log(`Restored ${indicators.size} indicators from backup`);
 			
 			return indicators.size;
 		} catch (error) {
-			console.error('Failed to restore indicators from backup:', error);
+			console.error('Error restoring indicators:', error);
 			throw error;
 		}
 	}

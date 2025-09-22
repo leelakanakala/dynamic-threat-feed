@@ -191,14 +191,14 @@ async function handleBackup(feedManager: FeedManager): Promise<Response> {
  */
 async function handleRestore(feedManager: FeedManager, request: Request): Promise<Response> {
 	try {
-		const backup = await request.json();
-		
-		// Validate backup structure
-		if (!backup.metadata || !backup.indicators || !backup.sources) {
+		const backup = await request.json() as any;
+		const backupData = backup as any;
+		if (!backup || typeof backup !== 'object' || 
+			!backupData.metadata || !backupData.indicators || !backupData.sources) {
 			return createErrorResponse('Invalid backup format', 400);
 		}
 
-		await feedManager.restoreFeedData(backup);
+		await feedManager.restoreFeedData(backupData);
 		return createSuccessResponse({ message: 'Feed data restored successfully' });
 
 	} catch (error) {

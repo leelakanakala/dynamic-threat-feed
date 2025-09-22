@@ -48,7 +48,40 @@ export interface CollectionResult {
 	};
 }
 
-// Cloudflare Indicator Feed API types
+// Cloudflare Gateway Lists API types (replacing Indicator Feed types)
+export interface CloudflareGatewayList {
+	id?: string;
+	name: string;
+	description?: string;
+	type: 'IP' | 'SERIAL' | 'URL' | 'DOMAIN' | 'EMAIL';
+	count?: number;
+	created_at?: string;
+	updated_at?: string;
+}
+
+export interface CloudflareGatewayListResponse {
+	success: boolean;
+	errors: any[];
+	messages: any[];
+	result: CloudflareGatewayList;
+}
+
+export interface CloudflareGatewayListUploadResponse {
+	success: boolean;
+	errors: any[];
+	messages: any[];
+	result: {
+		operation_id: string;
+	};
+}
+
+// CSV generation types
+export interface CSVRecord {
+	value: string;
+	description: string;
+}
+
+// Cloudflare Indicator Feed API types (keeping for backward compatibility)
 export interface CloudflareIndicatorFeed {
 	id?: string;
 	name: string;
@@ -111,7 +144,10 @@ export interface FeedUpdateResult {
 // Storage keys for KV namespace
 export const KV_KEYS = {
 	FEED_METADATA: 'feed:metadata',
-	INDICATORS_PREFIX: 'indicators:',
+	INDICATORS_PREFIX: 'indicators:', // Legacy - for individual indicators
+	ALL_INDICATORS: 'indicators:bulk', // Legacy - for bulk storage
+	INDICATORS_CHUNKS: 'indicators:chunks:', // New - for chunked storage
+	INDICATORS_INDEX: 'indicators:index', // Index of chunks
 	LAST_UPDATE: 'feed:last_update',
 	UPDATE_STATS: 'feed:update_stats',
 	SOURCES_CONFIG: 'config:sources'

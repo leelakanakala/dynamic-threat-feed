@@ -31,24 +31,24 @@ export class FeedManager {
 			throw new Error('Invalid Cloudflare API credentials');
 		}
 
-		// Get or create the indicator feed
-		const feed = await this.cloudflareAPI.getOrCreateIndicatorFeed();
+		// Get or create the Gateway List
+		const gatewayList = await this.cloudflareAPI.getOrCreateGatewayList();
 		
 		// Create or update feed metadata
 		const metadata: FeedMetadata = {
-			feed_id: feed.id!,
-			name: feed.name,
-			description: feed.description || this.env.FEED_DESCRIPTION,
-			created_at: new Date().toISOString(),
-			last_updated: new Date().toISOString(),
-			total_indicators: 0,
-			active_indicators: 0,
+			feed_id: gatewayList.id!,
+			name: gatewayList.name,
+			description: gatewayList.description || this.env.FEED_DESCRIPTION,
+			created_at: gatewayList.created_at || new Date().toISOString(),
+			last_updated: gatewayList.updated_at || new Date().toISOString(),
+			total_indicators: gatewayList.count || 0,
+			active_indicators: gatewayList.count || 0,
 			update_frequency: `${this.env.FEED_UPDATE_INTERVAL_HOURS}h`,
 			sources: this.threatCollector.getActiveSources().map(s => s.name)
 		};
 
 		await this.storage.storeFeedMetadata(metadata);
-		console.log(`Initialized feed: ${metadata.name} (${metadata.feed_id})`);
+		console.log(`Initialized Gateway List: ${metadata.name} (${metadata.feed_id})`);
 
 		return metadata;
 	}
@@ -81,15 +81,17 @@ export class FeedManager {
 			console.log('Step 4: Storing updated indicators...');
 			await this.storage.storeIndicators(mergedIndicators);
 
-			// Step 5: Update Cloudflare indicator feed
-			console.log('Step 5: Updating Cloudflare indicator feed...');
+			// Step 5: Update Cloudflare Gateway List (SINGLE API CALL)
+			console.log('Step 5: Updating Cloudflare Gateway List...');
 			const metadata = await this.storage.getFeedMetadata();
 			if (!metadata) {
 				throw new Error('Feed metadata not found. Run initialize() first.');
 			}
 
 			const indicatorsArray = Array.from(mergedIndicators.values());
-			const uploadResult = await this.cloudflareAPI.updateFeedSnapshot(metadata.feed_id, indicatorsArray);
+			console.log(`Uploading ${indicatorsArray.length} indicators in single CSV upload...`);
+			
+			const uploadResult = await this.cloudflareAPI.updateGatewayListSnapshot(metadata.feed_id, indicatorsArray);
 
 			// Step 6: Update metadata and statistics
 			console.log('Step 6: Updating metadata and statistics...');
@@ -97,19 +99,19 @@ export class FeedManager {
 				...metadata,
 				last_updated: new Date().toISOString(),
 				total_indicators: mergedIndicators.size,
-				active_indicators: uploadResult.result.indicators_created + uploadResult.result.indicators_updated,
+				active_indicators: mergedIndicators.size, // Gateway Lists don't distinguish created/updated
 				sources: this.threatCollector.getActiveSources().map(s => s.name)
 			};
 
 			await this.storage.storeFeedMetadata(updatedMetadata);
 			await this.storage.storeLastUpdate(new Date().toISOString());
 
-			// Create update result
+			// Create update result - Gateway Lists return operation_id instead of counts
 			const updateResult: FeedUpdateResult = {
 				success: uploadResult.success,
 				feed_id: metadata.feed_id,
-				indicators_added: uploadResult.result.indicators_created,
-				indicators_updated: uploadResult.result.indicators_updated,
+				indicators_added: uploadResult.success ? mergedIndicators.size : 0,
+				indicators_updated: 0, // Gateway Lists replace all items
 				indicators_removed: expiredCount,
 				processing_time_ms: Date.now() - startTime,
 				errors: uploadResult.errors || []
@@ -200,9 +202,9 @@ export class FeedManager {
 		let cloudflareStats = null;
 		if (metadata) {
 			try {
-				cloudflareStats = await this.cloudflareAPI.getFeedStats(metadata.feed_id);
+				cloudflareStats = await this.cloudflareAPI.getGatewayListStats(metadata.feed_id);
 			} catch (error) {
-				console.error('Failed to get Cloudflare feed stats:', error);
+				console.error('Failed to get Cloudflare Gateway List stats:', error);
 			}
 		}
 

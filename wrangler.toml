@@ -9,7 +9,7 @@ enabled = true
 # KV namespace for storing threat data and feed metadata
 [[kv_namespaces]]
 binding = "THREAT_DATA"
-id = "your-kv-namespace-id-here"  # Replace with actual KV namespace ID
+id = "529da1e33da244d5ad452478da9fda8c"  # Replace with actual KV namespace ID
 
 # Cron trigger for daily threat feed updates
 [triggers]
