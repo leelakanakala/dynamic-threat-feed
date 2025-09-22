@@ -1,0 +1,31 @@
+{
+	"name": "dynamic-threat-feed",
+	"version": "1.0.0",
+	"description": "Cloudflare Workers-based dynamic threat feed system that fetches threat intelligence and creates custom indicator feeds",
+	"main": "src/index.ts",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types",
+		"build": "wrangler deploy --dry-run"
+	},
+	"keywords": [
+		"cloudflare-workers",
+		"threat-intelligence",
+		"security",
+		"indicator-feeds"
+	],
+	"author": "Your Name",
+	"license": "MIT",
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.8.19",
+		"@cloudflare/workers-types": "^4.20241022.0",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.38.0"
+	},
+	"dependencies": {}
+}

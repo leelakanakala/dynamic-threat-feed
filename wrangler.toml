@@ -1,0 +1,32 @@
+name = "dynamic-threat-feed"
+main = "src/index.ts"
+compatibility_date = "2025-09-22"
+
+# Enable observability for monitoring
+[observability]
+enabled = true
+
+# KV namespace for storing threat data and feed metadata
+[[kv_namespaces]]
+binding = "THREAT_DATA"
+id = "your-kv-namespace-id-here"  # Replace with actual KV namespace ID
+
+# Cron trigger for daily threat feed updates
+[triggers]
+crons = ["0 2 * * *"]  # Run daily at 2 AM UTC
+
+# Environment variables (use wrangler secret for sensitive values)
+[vars]
+FEED_NAME = "custom-threat-feed"
+FEED_DESCRIPTION = "Dynamic threat intelligence feed with IPs and domains"
+MAX_INDICATORS_PER_BATCH = "1000"
+FEED_UPDATE_INTERVAL_HOURS = "24"
+
+# Secrets to be set via wrangler secret put command:
+# - CLOUDFLARE_API_TOKEN: Your Cloudflare API token with Intel:Edit permissions
+# - CLOUDFLARE_ACCOUNT_ID: Your Cloudflare account ID
+# - THREAT_SOURCES_CONFIG: JSON configuration of threat intelligence sources
+
+# Resource limits
+[limits]
+cpu_ms = 30000  # 30 seconds max execution time
